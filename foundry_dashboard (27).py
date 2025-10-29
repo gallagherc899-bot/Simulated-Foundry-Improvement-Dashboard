@@ -59,7 +59,7 @@ if "validation_results" not in st.session_state:
     }
 
 # Use ASCII-safe labels only
-tabs = st.tabs(["Predict", "Validation", "History"])
+tabs = st.tabs(["Predict", "Validation"])
 st.write(f"✅ Tabs loaded: {len(tabs)}")
 
 # -----------------------------
@@ -67,7 +67,24 @@ st.write(f"✅ Tabs loaded: {len(tabs)}")
 # -----------------------------
 with tabs[0]:
     st.write("✅ Predict Tab Loaded")
-    # ... your Predict logic ...
+
+    # Part selector
+    part_ids = sorted(df["part_id"].unique())
+    selected_part = st.selectbox("Select Part ID to Predict", part_ids)
+
+    # Placeholder prediction (you can replace with actual ML logic)
+    st.info(f"Prediction for Part ID: {selected_part} — Placeholder Model")
+
+    # Historical Data Display for Selected Part
+    st.markdown("---")
+    st.subheader("Historical Data for Selected Part")
+
+    filtered_df = df[df["part_id"] == selected_part]
+    if filtered_df.empty:
+        st.warning("No historical data found for the selected part.")
+    else:
+        st.dataframe(filtered_df)
+        st.write("Historical records:", len(filtered_df))
 
 # -----------------------------
 # TAB 2: Validation
@@ -75,13 +92,3 @@ with tabs[0]:
 with tabs[1]:
     st.write("✅ Validation Tab Loaded")
     # ... your Validation logic ...
-
-# -----------------------------
-# TAB 3: History
-# -----------------------------
-if len(tabs) > 2:
-    with tabs[2]:
-        st.write("✅ History Tab Loaded")
-        # ... your History tab logic ...
-else:
-    st.error("❌ History tab failed to render. Try removing emojis from title and tab labels.")

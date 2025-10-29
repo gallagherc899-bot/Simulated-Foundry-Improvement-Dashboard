@@ -35,7 +35,7 @@ USE_RATE_COLS_PERMANENT = True
 
 
 # -----------------------------
-# Helpers - MODIFIED for threshold fix (means > 0.0)
+# Helpers - MODIFIED for threshold fix (means > 0.0) and robustness
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def load_and_clean(csv_path: str) -> pd.DataFrame:
@@ -260,11 +260,13 @@ def historical_defect_pareto_for_part(selected_part: int,
     if not rate_cols:
         return pd.DataFrame(columns=["defect", "mean_rate", "share_%", "cumulative_%"])
 
-    part_hist = df_full_history[df_full_history["part_id"] == selected_part]
+    part_hist = df_full_history[df_full_history["part_id"] == selected_part].copy()
     if part_hist.empty:
         return pd.DataFrame(columns=["defect", "mean_rate", "share_%", "cumulative_%"])
 
+    # FIX: Calculate mean on the relevant columns and fill NaN
     means = part_hist[rate_cols].mean().fillna(0.0)
+    
     # FIX: Only filter out absolute zero (0.0), ensuring even tiny historical rates are captured.
     means = means[means > 0.0] 
     means = means.sort_values(ascending=False).head(k)
@@ -301,11 +303,13 @@ def historical_defect_full_list_for_part(selected_part: int, df_full_history: pd
     if not rate_cols:
         return pd.DataFrame(columns=["defect", "part_mean_rate"])
 
-    part_hist = df_full_history[df_full_history["part_id"] == selected_part]
+    part_hist = df_full_history[df_full_history["part_id"] == selected_part].copy()
     if part_hist.empty:
         return pd.DataFrame(columns=["defect", "part_mean_rate"])
 
+    # FIX: Calculate mean on the relevant columns and fill NaN
     means = part_hist[rate_cols].mean().fillna(0.0)
+    
     # FIX: Only filter out absolute zero (0.0)
     means = means[means > 0.0] 
     means = means.sort_values(ascending=False)
@@ -696,7 +700,7 @@ with tabs[0]:
             )
         else:
             # This message should now only appear if the part literally has no defect rate columns with mean > 0
-            st.info(f"No defect rate columns with mean $> 0$ found for Part {selected_part} in the full history.")
+            st.info(f"No defect rate columns with mean $> 0$ found for Part {selected_part} in the full history. The failure is likely driven by reliability metrics.")
 
 
         # -----------------------------

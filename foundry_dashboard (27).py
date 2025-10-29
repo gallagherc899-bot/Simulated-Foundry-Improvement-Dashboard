@@ -391,10 +391,17 @@ st.title("🧪 Foundry Scrap Risk Dashboard — Actionable Insights")
 st.caption("RF + calibrated probs • **Validation-tuned (s, $\gamma$)** quick-hook • per-part **exceedance** scaling • MTTFscrap & reliability • Historical (Full History) & Predicted 80% Pareto")
 
 # Global state to hold validation results (for automatic use in the Predict tab)
+# --- CRITICAL FIX 1: Initialize ALL expected keys with defaults to prevent KeyError ---
 if "validation_results" not in st.session_state:
-    st.session_state.validation_results = {}
+    st.session_state.validation_results = {
+        "is_complete": False,
+        "s_median": 1.0, 
+        "gamma_median": 0.5, 
+        "n_estimators": DEFAULT_ESTIMATORS, 
+        "results_df": pd.DataFrame(),
+    }
 
-# --- CRITICAL FIX HERE: Define all three tabs correctly ---
+# --- CRITICAL FIX 2: Define all three tabs correctly ---
 tabs = st.tabs(["🔮 Predict", "📏 Validation (6–2–1)", "⚙️ Historical Part View"])
 
 # -----------------------------
@@ -447,7 +454,7 @@ with tabs[2]:
 with tabs[1]:
     st.subheader("Model Hyperparameters & Tuning Controls (Engineer View)")
     
-    # Tuning controls MOVED from the old sidebar
+    # Tuning controls 
     c1, c2, c3 = st.columns(3)
     with c1:
         n_estimators = st.number_input("RandomForest Trees", 80, 600, DEFAULT_ESTIMATORS, 20)
@@ -464,16 +471,16 @@ with tabs[1]:
     st.subheader("Rolling 6–2–1 Backtest with Wilcoxon Significance")
     
     # Store validation results automatically
+    results_df = st.session_state.validation_results["results_df"]
+
     if run_validation and not st.session_state.validation_results.get("is_complete", False):
         with st.spinner("Running rolling evaluation…"):
             rows = []
             start_date, end_date = df["week_ending"].min(), df["week_ending"].max()
             
-            # Simplified for clarity; same logic as original code
             s_tuned_list, g_tuned_list = [], [] 
 
             while start_date + relativedelta(months=(6+2+1)) <= end_date:
-                # ... (rolling window definitions remain the same) ...
                 train_end = start_date + relativedelta(months=6)
                 val_end = train_end + relativedelta(months=2)
                 test_end = val_end + relativedelta(months=1)
@@ -521,20 +528,20 @@ with tabs[1]:
 
                 part_prev_win, part_scale_win, _ = compute_part_exceedance_baselines(train, thr_label)
                 tune = tune_s_gamma_on_validation(p_val_raw, y_va, val_f["part_id"], part_scale_win, S_GRID, GAMMA_GRID)
-                s_star, gamma_star = tune["s"], tune["gamma"]
-                s_tuned_list.append(s_star)
-                g_tuned_list.append(gamma_star)
+                s_star_win, gamma_star_win = tune["s"], tune["gamma"]
+                s_tuned_list.append(s_star_win)
+                g_tuned_list.append(gamma_star_win)
 
                 pid_test = test_f["part_id"].to_numpy()
                 ps_test  = part_scale_win.reindex(pid_test).fillna(1.0).to_numpy(dtype=float)
-                p_test_adj = np.clip(p_test_raw * (s_star * (ps_test ** gamma_star)), 0, 1)
+                p_test_adj = np.clip(p_test_raw * (s_star_win * (ps_test ** gamma_star_win)), 0, 1)
 
                 actual_prev = float((test_f["scrap%"] > thr_label).mean())
 
                 rows.append({
                     "window_start": start_date.date(),
                     "train_rows": len(train), "test_rows": len(test),
-                    "s_tuned": round(float(s_star),2), "gamma_tuned": round(float(gamma_star),2),
+                    "s_tuned": round(float(s_star_win),2), "gamma_tuned": round(float(gamma_star_win),2),
                     "actual_mean": round(actual_prev*100,2),
                     "pred_mean_raw": round(float(np.mean(p_test_raw))*100,2),
                     "pred_mean_adj": round(float(np.mean(p_test_adj))*100,2),
@@ -548,45 +555,48 @@ with tabs[1]:
             st.session_state.validation_results["results_df"] = results_df
             st.session_state.validation_results["s_median"] = np.median(s_tuned_list) if s_tuned_list else 1.0
             st.session_state.validation_results["gamma_median"] = np.median(g_tuned_list) if g_tuned_list else 0.5
+            st.session_state.validation_results["n_estimators"] = n_estimators
             
-        # Display validation results
-        if results_df.empty:
-            st.warning("No valid rolling windows found.")
+        
+    # Display validation results
+    if st.session_state.validation_results["results_df"].empty:
+        if run_validation:
+            st.warning("No valid rolling windows found yet, or data is insufficient. Need at least 9 months of data.")
         else:
-            st.dataframe(results_df, use_container_width=True)
-
-            def wilcoxon_summary(df, col):
-                actual = df["actual_mean"].to_numpy(float)
-                pred = df[col].to_numpy(float)
-                rel_err = np.where(actual>0, np.abs(pred-actual)/actual,
-                                    np.where(pred==0, 0.0, 1.0))
-                gain = np.clip(1.0-rel_err, 0.0, 1.0)
-                rows=[]
-                if len(gain)>=10:
-                    for th in [0.50, 0.80, 0.90]:
-                        stat, p = wilcoxon(gain-th, alternative="greater")
-                        rows.append([th, gain.mean(), np.median(gain), (gain>=th).mean()*100, stat, p, "✅" if p<0.05 else "❌"])
-                return pd.DataFrame(rows, columns=["Threshold","Mean Gain","Median Gain","% Windows ≥Threshold","Statistic","p-value","Significant?"])
-
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown("**Wilcoxon — Adjusted (s, $\gamma$)**")
-                summ_adj = wilcoxon_summary(results_df, "pred_mean_adj")
-                if not summ_adj.empty: st.dataframe(summ_adj, use_container_width=True)
-                else: st.info("Need $\ge 10$ windows for Wilcoxon.")
-
-            with c2:
-                st.markdown("**Wilcoxon — Raw (calibrated)**")
-                summ_raw = wilcoxon_summary(results_df, "pred_mean_raw")
-                if not summ_raw.empty: st.dataframe(summ_raw, use_container_width=True)
-                else: st.info("Need $\ge 10$ windows for Wilcoxon.")
-                
-            st.markdown(f"***Median Tuned Quick-Hook: s = {st.session_state.validation_results['s_median']:.2f}, $\gamma$ = {st.session_state.validation_results['gamma_median']:.2f}***")
-
-    elif not run_validation:
-        st.info("Tick **Run 6–2–1 rolling validation** in the sidebar to compute windows and Wilcoxon tests.")
+            st.info("Tick **Run 6–2–1 rolling validation** in the sidebar to compute windows and Wilcoxon tests.")
     else:
-        st.info("Validation results loaded. Un-tick and re-tick the validation box in the sidebar to re-run.")
+        st.dataframe(results_df, use_container_width=True)
+
+        def wilcoxon_summary(df, col):
+            actual = df["actual_mean"].to_numpy(float)
+            pred = df[col].to_numpy(float)
+            rel_err = np.where(actual>0, np.abs(pred-actual)/actual,
+                                np.where(pred==0, 0.0, 1.0))
+            gain = np.clip(1.0-rel_err, 0.0, 1.0)
+            rows=[]
+            if len(gain)>=10:
+                for th in [0.50, 0.80, 0.90]:
+                    stat, p = wilcoxon(gain-th, alternative="greater")
+                    rows.append([th, gain.mean(), np.median(gain), (gain>=th).mean()*100, stat, p, "✅" if p<0.05 else "❌"])
+            return pd.DataFrame(rows, columns=["Threshold","Mean Gain","Median Gain","% Windows ≥Threshold","Statistic","p-value","Significant?"])
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Wilcoxon — Adjusted (s, $\gamma$)**")
+            summ_adj = wilcoxon_summary(results_df, "pred_mean_adj")
+            if not summ_adj.empty: st.dataframe(summ_adj, use_container_width=True)
+            else: st.info("Need $\ge 10$ windows for Wilcoxon.")
+
+        with c2:
+            st.markdown("**Wilcoxon — Raw (calibrated)**")
+            summ_raw = wilcoxon_summary(results_df, "pred_mean_raw")
+            if not summ_raw.empty: st.dataframe(summ_raw, use_container_width=True)
+            else: st.info("Need $\ge 10$ windows for Wilcoxon.")
+            
+        # --- CRITICAL FIX 3: Use .get() method to safely display the tuned parameters ---
+        s_disp = st.session_state.validation_results.get("s_median", 1.0)
+        g_disp = st.session_state.validation_results.get("gamma_median", 0.5)
+        st.markdown(f"***Median Tuned Quick-Hook: s = {s_disp:.2f}, $\gamma$ = {g_disp:.2f}***")
 
 
 # -----------------------------
@@ -598,9 +608,10 @@ with tabs[0]:
     # The time split is necessary here to train the model on the last 60% of data (df_train_f)
     df_train, df_calib, df_test = time_split(df)
     
-    # --- GET TUNING PARAMS ---
+    # --- GET TUNING PARAMS (SAFE ACCESS) ---
     s_star = st.session_state.validation_results.get("s_median", 1.0)
     gamma_star = st.session_state.validation_results.get("gamma_median", 0.5)
+    n_est = st.session_state.validation_results.get("n_estimators", DEFAULT_ESTIMATORS) # Safe access
     
     # Train-only features at current threshold
     mtbf_train = compute_mtbf_on_train(df_train, thr_label)
@@ -617,14 +628,11 @@ with tabs[0]:
     X_calib, y_calib, _        = make_xy(df_calib_f, thr_label, USE_RATE_COLS_PERMANENT)
     X_test,  y_test,  _        = make_xy(df_test_f,  thr_label, USE_RATE_COLS_PERMANENT)
 
-    # Note: Use n_estimators from validation tab, if running prediction on its own, it uses DEFAULT_ESTIMATORS
-    n_est = st.session_state.validation_results.get("n_estimators", DEFAULT_ESTIMATORS)
     _, calibrated_model, calib_method = train_and_calibrate(X_train, y_train, X_calib, y_calib, n_est)
 
     p_calib = calibrated_model.predict_proba(X_calib)[:, 1] if len(X_calib) else np.array([])
     p_test  = calibrated_model.predict_proba(X_test)[:, 1]  if len(X_test) else np.array([])
 
-    # Guarded prior shift - NO LONGER USED ON PREDICT TAB, but calculation remains for validation
     shift_note = "Prior shift is disabled on the Predict tab to avoid manual error. See Validation tab."
 
     # Inputs

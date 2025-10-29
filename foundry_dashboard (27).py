@@ -35,7 +35,7 @@ USE_RATE_COLS_PERMANENT = True
 
 
 # -----------------------------
-# Helpers - MODIFIED for Defect Catalog
+# Helpers - MODIFIED for threshold fix (means > 0.0)
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def load_and_clean(csv_path: str) -> pd.DataFrame:
@@ -224,7 +224,8 @@ def local_defect_drivers(calibrated_model,
         deltas.append((col, delta))
 
     dd = pd.DataFrame(deltas, columns=["defect", "delta_prob"])
-    dd = dd[dd["delta_prob"] > 1e-6] # Filter out defects with negligible impact
+    # Keep the original filter here: only actionable defects (> 1e-6) matter for the prediction driver
+    dd = dd[dd["delta_prob"] > 1e-6] 
     dd = dd.sort_values("delta_prob", ascending=False).head(k)
     total = float(dd["delta_prob"].sum())
     
@@ -247,13 +248,13 @@ def local_defect_drivers(calibrated_model,
         return dd.head(0)
 
 
-# --- Modified: Historical Pareto (80% cutoff for institutional memory) ---
+# --- MODIFIED: Historical Pareto (80% cutoff for institutional memory) ---
 def historical_defect_pareto_for_part(selected_part: int,
                                       df_full_history: pd.DataFrame,
                                       k: int = 100) -> pd.DataFrame:
     """
     Top historical defect rates (means) for the part, dynamically stopping at 80% cumulative share.
-    USES THE FULL HISTORY (INSTITUTIONAL MEMORY) to find the most significant 80% of historical issues.
+    USES THE FULL HISTORY (INSTITUTIONAL MEMORY).
     """
     rate_cols = [c for c in df_full_history.columns if c.endswith("_rate")]
     if not rate_cols:
@@ -264,7 +265,8 @@ def historical_defect_pareto_for_part(selected_part: int,
         return pd.DataFrame(columns=["defect", "mean_rate", "share_%", "cumulative_%"])
 
     means = part_hist[rate_cols].mean().fillna(0.0)
-    means = means[means > 1e-6] # Filter out negligible mean rates
+    # FIX: Only filter out absolute zero (0.0), ensuring even tiny historical rates are captured.
+    means = means[means > 0.0] 
     means = means.sort_values(ascending=False).head(k)
     total = float(means.sum())
     
@@ -289,7 +291,7 @@ def historical_defect_pareto_for_part(selected_part: int,
         out["cumulative_%"] = 0.0
         return out.head(0)
 
-# --- NEW: Function to get all historical defects for the current part (Full List) ---
+# --- MODIFIED: Historical Defect Full List for Part (Full List) ---
 def historical_defect_full_list_for_part(selected_part: int, df_full_history: pd.DataFrame) -> pd.DataFrame:
     """
     Computes the mean rate for *all* defect columns for the selected part.
@@ -304,8 +306,8 @@ def historical_defect_full_list_for_part(selected_part: int, df_full_history: pd
         return pd.DataFrame(columns=["defect", "part_mean_rate"])
 
     means = part_hist[rate_cols].mean().fillna(0.0)
-    # Filter out negligible mean rates (close to zero)
-    means = means[means > 1e-6] 
+    # FIX: Only filter out absolute zero (0.0)
+    means = means[means > 0.0] 
     means = means.sort_values(ascending=False)
 
     out = pd.DataFrame({"defect": means.index,
@@ -382,7 +384,7 @@ if not os.path.exists(csv_path):
 df = load_and_clean(csv_path)
 
 st.title("🧪 Foundry Scrap Risk Dashboard — Actionable Insights")
-st.caption("RF + calibrated probs • **Validation-tuned (s, γ)** quick-hook • per-part **exceedance** scaling • MTTFscrap & reliability • Historical (Full History) & Predicted 80% Pareto")
+st.caption("RF + calibrated probs • **Validation-tuned (s, $\gamma$)** quick-hook • per-part **exceedance** scaling • MTTFscrap & reliability • Historical (Full History) & Predicted 80% Pareto")
 
 # Global state to hold validation results (for automatic use in the Predict tab)
 if "validation_results" not in st.session_state:
@@ -402,12 +404,12 @@ with tabs[1]:
         n_estimators = st.number_input("RandomForest Trees", 80, 600, DEFAULT_ESTIMATORS, 20)
         enable_prior_shift = st.checkbox("Enable prior shift (validation ➜ test)", value=True)
     with c2:
-        prior_shift_guard = st.slider("Prior-shift guard (max Δ prevalence, pp)", 5, 50, 20, step=5)
+        prior_shift_guard = st.slider("Prior-shift guard (max $\Delta$ prevalence, pp)", 5, 50, 20, step=5)
     with c3:
         # Default to NOT use manual hook, but allow engineer to override for testing
-        use_manual_hook = st.checkbox("Override Quick-Hook (s, γ)", value=False)
+        use_manual_hook = st.checkbox("Override Quick-Hook (s, $\gamma$)", value=False)
         s_manual = st.slider("Manual s", 0.60, 1.20, 1.00, 0.01)
-        gamma_manual = st.slider("Manual γ", 0.50, 1.20, 0.50, 0.01)
+        gamma_manual = st.slider("Manual $\gamma$", 0.50, 1.20, 0.50, 0.01)
 
     st.markdown("---")
     st.subheader("Rolling 6–2–1 Backtest with Wilcoxon Significance")
@@ -522,13 +524,13 @@ with tabs[1]:
                 st.markdown("**Wilcoxon — Adjusted (s, $\gamma$)**")
                 summ_adj = wilcoxon_summary(results_df, "pred_mean_adj")
                 if not summ_adj.empty: st.dataframe(summ_adj, use_container_width=True)
-                else: st.info("Need ≥10 windows for Wilcoxon.")
+                else: st.info("Need $\ge 10$ windows for Wilcoxon.")
 
             with c2:
                 st.markdown("**Wilcoxon — Raw (calibrated)**")
                 summ_raw = wilcoxon_summary(results_df, "pred_mean_raw")
                 if not summ_raw.empty: st.dataframe(summ_raw, use_container_width=True)
-                else: st.info("Need ≥10 windows for Wilcoxon.")
+                else: st.info("Need $\ge 10$ windows for Wilcoxon.")
                 
             st.markdown(f"***Median Tuned Quick-Hook: s = {st.session_state.validation_results['s_median']:.2f}, $\gamma$ = {st.session_state.validation_results['gamma_median']:.2f}***")
 
@@ -580,7 +582,9 @@ with tabs[0]:
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         part_ids = sorted(df["part_id"].unique())
-        selected_part = st.selectbox("Select Part ID", part_ids, index=part_ids.index(268) if 268 in part_ids else 0)
+        # Default to Part 268 to reproduce the previous test case
+        default_index = part_ids.index(268) if 268 in part_ids else 0
+        selected_part = st.selectbox("Select Part ID", part_ids, index=default_index)
     with c2:
         quantity = st.number_input("Order Quantity", 1, 100000, 100)
     with c3:
@@ -626,7 +630,7 @@ with tabs[0]:
         # Metrics
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Predicted Scrap Risk (raw)", f"{base_p*100:.2f}%")
-        m2.metric("Adjusted Scrap Risk (s·part^γ)", f"{corrected_p*100:.2f}%")
+        m2.metric("Adjusted Scrap Risk (s·part^$\gamma$)", f"{corrected_p*100:.2f}%")
         m3.metric("Expected Scrap Count", f"{expected_scrap_count} parts")
         m4.metric("Expected Loss", f"${expected_loss:.2f}")
 
@@ -654,10 +658,10 @@ with tabs[0]:
 
         st.subheader("Reliability context (at current threshold)")
         r1, r2, r3 = st.columns(3)
-        r1.metric("MTTFscrap", "∞ runs" if mttf_scrap == float("inf") else f"{mttf_scrap:.2f} runs")
+        r1.metric("MTTFscrap", "$\infty$ runs" if mttf_scrap == float("inf") else f"{mttf_scrap:.2f} runs")
         r2.metric("Reliability (next run)", f"{reliability_next_run*100:.2f}%")
         r3.metric("Failures / Runs", f"{failures} / {N}")
-        st.caption("Reliability computed as R(1) = exp(−1/MTTFscrap). Threshold slider sets both labels and MTTF calculation.")
+        st.caption("Reliability computed as $R(1) = \exp(-1/MTTFscrap)$. Threshold slider sets both labels and MTTF calculation.")
 
         # Historical exceedance prevalence at current threshold
         part_prev_card = float(part_prev_train.get(selected_part, np.nan)) if 'part_prev_train' in locals() else np.nan
@@ -671,7 +675,7 @@ with tabs[0]:
              elif corrected_p < part_prev_card:
                 st.success("⬇️ Prediction below historical exceedance rate for this part.")
              else:
-                st.info("≈ Equal to historical exceedance rate.")
+                st.info("$\approx$ Equal to historical exceedance rate.")
         
         # -----------------------------
         # NEW: Part-Specific Full Defect Catalog
@@ -691,7 +695,8 @@ with tabs[0]:
                 use_container_width=True
             )
         else:
-            st.info(f"No defect rate columns found for Part {selected_part} in the full history.")
+            # This message should now only appear if the part literally has no defect rate columns with mean > 0
+            st.info(f"No defect rate columns with mean $> 0$ found for Part {selected_part} in the full history.")
 
 
         # -----------------------------
@@ -742,7 +747,7 @@ with tabs[0]:
                         ).assign(**{
                             "share_%": lambda d: d["share_%"].round(2),
                             "cumulative_%": lambda d: d["cumulative_%"].round(1),
-                        }).rename(columns={"delta_prob_raw": "Δ prob (pp)"}),
+                        }).rename(columns={"delta_prob_raw": "$\Delta$ prob (pp)"}),
                         use_container_width=True
                     )
                 else:

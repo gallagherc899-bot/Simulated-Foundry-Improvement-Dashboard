@@ -30,14 +30,12 @@ MIN_SAMPLES_LEAF = 2
 
 S_GRID = np.linspace(0.6, 1.2, 13)
 GAMMA_GRID = np.linspace(0.5, 1.2, 15)
-# TOP_K_PARETO is no longer used for dynamic 80% cutoff, but kept as a fallback.
 TOP_K_PARETO = 8 
-# Set rate cols to always be true for Pareto output (manager requirement)
 USE_RATE_COLS_PERMANENT = True 
 
 
 # -----------------------------
-# Helpers - MODIFIED for 80% Pareto Rule & INSTITUTIONAL MEMORY
+# Helpers - MODIFIED for Defect Catalog
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def load_and_clean(csv_path: str) -> pd.DataFrame:
@@ -201,7 +199,7 @@ def local_defect_drivers(calibrated_model,
                          FEATURES: list,
                          df_train: pd.DataFrame,
                          strategy: str = "p75",
-                         k: int = 100) -> pd.DataFrame: # Increased k for intermediate calculation
+                         k: int = 100) -> pd.DataFrame:
     """
     Compute a local 'predicted Pareto' by measuring the positive delta in raw calibrated probability.
     Implements a dynamic stop at the first defect where cumulative_% meets or exceeds 80%.
@@ -249,15 +247,14 @@ def local_defect_drivers(calibrated_model,
         return dd.head(0)
 
 
-# --- MODIFIED: Use df_full_history for Institutional Memory ---
+# --- Modified: Historical Pareto (80% cutoff for institutional memory) ---
 def historical_defect_pareto_for_part(selected_part: int,
-                                      df_full_history: pd.DataFrame, # CHANGE: Takes the full dataset 'df'
-                                      k: int = 100) -> pd.DataFrame: # Increased k for intermediate calculation
+                                      df_full_history: pd.DataFrame,
+                                      k: int = 100) -> pd.DataFrame:
     """
     Top historical defect rates (means) for the part, dynamically stopping at 80% cumulative share.
-    USES THE FULL HISTORY (INSTITUTIONAL MEMORY).
+    USES THE FULL HISTORY (INSTITUTIONAL MEMORY) to find the most significant 80% of historical issues.
     """
-    # CHANGE: Use the full history (df_full_history) for rate cols and part history
     rate_cols = [c for c in df_full_history.columns if c.endswith("_rate")]
     if not rate_cols:
         return pd.DataFrame(columns=["defect", "mean_rate", "share_%", "cumulative_%"])
@@ -291,6 +288,31 @@ def historical_defect_pareto_for_part(selected_part: int,
         out["share_%"] = 0.0
         out["cumulative_%"] = 0.0
         return out.head(0)
+
+# --- NEW: Function to get all historical defects for the current part (Full List) ---
+def historical_defect_full_list_for_part(selected_part: int, df_full_history: pd.DataFrame) -> pd.DataFrame:
+    """
+    Computes the mean rate for *all* defect columns for the selected part.
+    This provides a full catalog of all possible historical defects for the part (no 80% cutoff).
+    """
+    rate_cols = [c for c in df_full_history.columns if c.endswith("_rate")]
+    if not rate_cols:
+        return pd.DataFrame(columns=["defect", "part_mean_rate"])
+
+    part_hist = df_full_history[df_full_history["part_id"] == selected_part]
+    if part_hist.empty:
+        return pd.DataFrame(columns=["defect", "part_mean_rate"])
+
+    means = part_hist[rate_cols].mean().fillna(0.0)
+    # Filter out negligible mean rates (close to zero)
+    means = means[means > 1e-6] 
+    means = means.sort_values(ascending=False)
+
+    out = pd.DataFrame({"defect": means.index,
+                        "part_mean_rate": means.values})
+    
+    return out.reset_index(drop=True)
+
 
 # Add risk alert summary box based on corrected_p
 def get_alert_summary(prob):
@@ -369,7 +391,7 @@ if "validation_results" not in st.session_state:
 tabs = st.tabs(["🔮 Predict", "📏 Validation (6–2–1)"])
 
 # -----------------------------
-# TAB 2: Validation (6–2–1) - TUNING CONTROLS MOVED HERE
+# TAB 2: Validation (6–2–1)
 # -----------------------------
 with tabs[1]:
     st.subheader("Model Hyperparameters & Tuning Controls (Engineer View)")
@@ -483,7 +505,6 @@ with tabs[1]:
             st.dataframe(results_df, use_container_width=True)
 
             def wilcoxon_summary(df, col):
-                # ... (wilcoxon_summary function remains the same) ...
                 actual = df["actual_mean"].to_numpy(float)
                 pred = df[col].to_numpy(float)
                 rel_err = np.where(actual>0, np.abs(pred-actual)/actual,
@@ -498,7 +519,7 @@ with tabs[1]:
 
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown("**Wilcoxon — Adjusted (s, γ)**")
+                st.markdown("**Wilcoxon — Adjusted (s, $\gamma$)**")
                 summ_adj = wilcoxon_summary(results_df, "pred_mean_adj")
                 if not summ_adj.empty: st.dataframe(summ_adj, use_container_width=True)
                 else: st.info("Need ≥10 windows for Wilcoxon.")
@@ -509,7 +530,7 @@ with tabs[1]:
                 if not summ_raw.empty: st.dataframe(summ_raw, use_container_width=True)
                 else: st.info("Need ≥10 windows for Wilcoxon.")
                 
-            st.markdown(f"***Median Tuned Quick-Hook: s = {st.session_state.validation_results['s_median']:.2f}, γ = {st.session_state.validation_results['gamma_median']:.2f}***")
+            st.markdown(f"***Median Tuned Quick-Hook: s = {st.session_state.validation_results['s_median']:.2f}, $\gamma$ = {st.session_state.validation_results['gamma_median']:.2f}***")
 
     elif not run_validation:
         st.info("Tick **Run 6–2–1 rolling validation** in the sidebar to compute windows and Wilcoxon tests.")
@@ -559,11 +580,11 @@ with tabs[0]:
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         part_ids = sorted(df["part_id"].unique())
-        selected_part = st.selectbox("Select Part ID", part_ids)
+        selected_part = st.selectbox("Select Part ID", part_ids, index=part_ids.index(268) if 268 in part_ids else 0)
     with c2:
-        quantity = st.number_input("Order Quantity", 1, 100000, 351)
+        quantity = st.number_input("Order Quantity", 1, 100000, 100)
     with c3:
-        weight = st.number_input("Piece Weight (lbs)", 0.1, 100.0, 4.0)
+        weight = st.number_input("Piece Weight (lbs)", 0.1, 100.0, 37.0)
     with c4:
         cost_per_part = st.number_input("Cost per Part ($)", 0.01, 100.0, 20.00, 0.01) # Set default cost to 20.00
     
@@ -609,7 +630,7 @@ with tabs[0]:
         m3.metric("Expected Scrap Count", f"{expected_scrap_count} parts")
         m4.metric("Expected Loss", f"${expected_loss:.2f}")
 
-        st.markdown(f"**Quick-hook params:** s = {s_star:.2f}, γ = {gamma_star:.2f}  | Calibration: **{calib_method}**")
+        st.markdown(f"**Quick-hook params:** s = {s_star:.2f}, $\gamma$ = {gamma_star:.2f}  | Calibration: **{calib_method}**")
         st.caption(shift_note)
         
         # Generate and display the alert
@@ -644,8 +665,7 @@ with tabs[0]:
             f"**Historical Exceedance Rate @ {thr_label:.1f}% (part):** "
             f"{(part_prev_card*100 if not np.isnan(part_prev_card) else np.nan):.2f}%  ({N} runs)"
         )
-        # Use simple comparison
-        if not np.isnan(part_prev_card): # Added check to ensure comparison is valid
+        if not np.isnan(part_prev_card):
              if corrected_p > part_prev_card:
                 st.warning("⬆️ Prediction above historical exceedance rate for this part.")
              elif corrected_p < part_prev_card:
@@ -653,12 +673,31 @@ with tabs[0]:
              else:
                 st.info("≈ Equal to historical exceedance rate.")
         
+        # -----------------------------
+        # NEW: Part-Specific Full Defect Catalog
+        # -----------------------------
+        st.subheader(f"Defect Catalog: All Historical Defects for Part {selected_part} (Full Institutional Memory)")
+        
+        part_catalog = historical_defect_full_list_for_part(selected_part, df)
+        if len(part_catalog):
+            st.markdown(
+                "***This table lists every defect ever recorded for this part, sorted by its overall historical mean rate, "
+                "to provide complete institutional memory of all possible failure modes.***"
+            )
+            st.dataframe(
+                part_catalog.assign(
+                    part_mean_rate=lambda d: d["part_mean_rate"].round(4)
+                ).rename(columns={"part_mean_rate": "Historical Mean Rate (Part)"}),
+                use_container_width=True
+            )
+        else:
+            st.info(f"No defect rate columns found for Part {selected_part} in the full history.")
+
 
         # -----------------------------
-        # NEW: Historical vs Predicted Pareto (80% rule applied)
-        # **The HISTORICAL Pareto now uses the full 'df' for institutional memory.**
+        # Historical vs Predicted Pareto (80% rule applied)
         # -----------------------------
-        st.subheader("Pareto of Defects — Historical vs Predicted (Top 80% Drivers)")
+        st.subheader("Pareto of Defects — Historical (Part 80% Drivers) vs Predicted (Local 80% Drivers)")
 
         rate_cols_in_model = [c for c in FEATURES if c.endswith("_rate")]
         if not rate_cols_in_model:
@@ -680,7 +719,7 @@ with tabs[0]:
             # Left-right display
             c_left, c_right = st.columns(2)
             with c_left:
-                st.markdown("**Historical Pareto (Full History Institutional Memory)**")
+                st.markdown("**Historical Pareto (Top 80% Institutional Memory)**")
                 if len(hist_pareto):
                     st.dataframe(
                         hist_pareto.assign(

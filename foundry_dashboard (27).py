@@ -1,5 +1,4 @@
-# streamlit_app.py
-# Run with: streamlit run streamlit_app.py
+# streamlit_scrap_dashboard.py
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -20,7 +19,7 @@ from sklearn.metrics import brier_score_loss, accuracy_score
 # Page / constants
 # -----------------------------
 st.set_page_config(
-    page_title="Simulated Foundry Scrap Risk Dashboard - Actionable Insights",
+    page_title="Foundry Scrap Risk Dashboard - Actionable Insights",
     layout="wide"
 )
 
@@ -34,14 +33,43 @@ TOP_K_PARETO = 8
 USE_RATE_COLS_PERMANENT = True 
 
 # -----------------------------
-# Load and Model Prep (Runs once at app startup)
+# Sidebar controls
 # -----------------------------
-# ... (content unchanged) ...
+st.sidebar.header("Data Source")
+csv_path = st.sidebar.text_input("Path to CSV", value="anonymized_parts.csv")
 
-# -----------------------------
-# Sidebar
-# -----------------------------
-# ... (content unchanged) ...
+st.sidebar.header("Risk Definition")
+thr_label = st.sidebar.slider("Scrap % Threshold", 1.0, 15.0, 6.50, 0.5)
+
+st.sidebar.header("Validation Settings")
+run_validation = st.sidebar.checkbox("Run rolling validation", value=True)
+
+# Validate CSV
+if not os.path.exists(csv_path):
+    st.error("CSV not found at path: " + csv_path)
+    st.stop()
+
+# Load Data
+@st.cache_data(show_spinner=False)
+def load_and_clean(csv_path):
+    df = pd.read_csv(csv_path)
+    df.columns = (
+        df.columns.str.strip()
+                  .str.lower()
+                  .str.replace(" ", "_")
+                  .str.replace("(", "", regex=False)
+                  .str.replace(")", "", regex=False)
+                  .str.replace("#", "num", regex=False)
+    )
+    needed = ["part_id", "week_ending", "scrap%", "order_quantity", "piece_weight_lbs"]
+    df = df.dropna(subset=needed).copy()
+    df["week_ending"] = pd.to_datetime(df["week_ending"], errors="coerce")
+    df = df.dropna(subset=["week_ending"])
+    df = df.sort_values("week_ending").reset_index(drop=True)
+    return df
+
+# Load the dataset
+df = load_and_clean(csv_path)
 
 # -----------------------------
 # Main Title and Tabs
@@ -58,24 +86,19 @@ if "validation_results" not in st.session_state:
         "results_df": pd.DataFrame(),
     }
 
-# Use ASCII-safe labels only
 tabs = st.tabs(["Predict", "Validation"])
-st.write(f"✅ Tabs loaded: {len(tabs)}")
 
 # -----------------------------
 # TAB 1: Predict
 # -----------------------------
 with tabs[0]:
-    st.write("✅ Predict Tab Loaded")
-
-    # Part selector
+    st.subheader("Predict")
     part_ids = sorted(df["part_id"].unique())
     selected_part = st.selectbox("Select Part ID to Predict", part_ids)
 
-    # Placeholder prediction (you can replace with actual ML logic)
     st.info(f"Prediction for Part ID: {selected_part} — Placeholder Model")
 
-    # Historical Data Display for Selected Part
+    # Historical section
     st.markdown("---")
     st.subheader("Historical Data for Selected Part")
 
@@ -90,5 +113,5 @@ with tabs[0]:
 # TAB 2: Validation
 # -----------------------------
 with tabs[1]:
-    st.write("✅ Validation Tab Loaded")
-    # ... your Validation logic ...
+    st.subheader("Validation")
+    st.write("Validation logic placeholder...")

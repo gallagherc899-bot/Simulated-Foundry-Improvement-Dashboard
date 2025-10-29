@@ -71,10 +71,9 @@ def load_and_clean(csv_path):
 df = load_and_clean(csv_path)
 
 st.title("Foundry Scrap Risk Dashboard")
-st.caption("Includes Predict, Validation, and Historical analysis tabs.")
+st.caption("Includes Predict, Validation, and History tabs.")
 
 # Initialize session state
-df_empty = df.empty
 if "validation_results" not in st.session_state:
     st.session_state.validation_results = {
         "is_complete": False,
@@ -84,30 +83,33 @@ if "validation_results" not in st.session_state:
         "results_df": pd.DataFrame(),
     }
 
-# Tabs setup (emoji-free for compatibility)
+# Tabs setup (ASCII-only labels)
 tabs = st.tabs(["Predict", "Validation", "History"])
+st.write(f"✅ Tabs loaded: {len(tabs)}")
 
-# Debug check for tab rendering
-st.write(f"Tabs loaded: {len(tabs)}")
-
+# Tab 1: Predict
 with tabs[0]:
     st.subheader("Predict Tab")
-    st.write("Predict Tab Loaded")
+    st.write("✅ Predict Tab Loaded")
 
+# Tab 2: Validation
 with tabs[1]:
     st.subheader("Validation Tab")
-    st.write("Validation Tab Loaded")
+    st.write("✅ Validation Tab Loaded")
 
-with tabs[2]:
-    st.subheader("History Tab")
-    st.write("History Tab Loaded")
-    
-    if df_empty:
-        st.warning("No data loaded to display history.")
-    else:
-        part_ids = sorted(df["part_id"].unique())
-        selected_part = st.selectbox("Select Part ID", part_ids)
-        filtered_df = df[df["part_id"] == selected_part]
-        st.dataframe(filtered_df)
+# Tab 3: History
+if len(tabs) > 2:
+    with tabs[2]:
+        st.subheader("History Tab")
+        st.write("✅ History Tab Loaded")
 
-        st.write("Historical data available:", len(filtered_df))
+        if df.empty:
+            st.warning("No data loaded to display history.")
+        else:
+            part_ids = sorted(df["part_id"].unique())
+            selected_part = st.selectbox("Select Part ID", part_ids)
+            filtered_df = df[df["part_id"] == selected_part]
+            st.dataframe(filtered_df)
+            st.write("Historical data available:", len(filtered_df))
+else:
+    st.error("❌ History tab not rendered due to tab list length.")

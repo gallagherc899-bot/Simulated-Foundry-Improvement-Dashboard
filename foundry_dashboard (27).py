@@ -35,7 +35,7 @@ USE_RATE_COLS_PERMANENT = True
 
 
 # -----------------------------
-# Helpers - MODIFIED for threshold fix (means > 0.0) and robustness
+# Helpers 
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def load_and_clean(csv_path: str) -> pd.DataFrame:
@@ -364,7 +364,7 @@ def get_alert_summary(prob):
 
 
 # -----------------------------
-# Sidebar - SIMPLIFIED for Foundry Manager
+# Sidebar
 # -----------------------------
 st.sidebar.header("Data Source")
 csv_path = st.sidebar.text_input("Path to CSV", value="anonymized_parts.csv")
@@ -394,7 +394,7 @@ st.caption("RF + calibrated probs • **Validation-tuned (s, $\gamma$)** quick-h
 if "validation_results" not in st.session_state:
     st.session_state.validation_results = {}
 
-# --- NEW TAB ADDED ---
+# --- CRITICAL FIX HERE: Define all three tabs correctly ---
 tabs = st.tabs(["🔮 Predict", "📏 Validation (6–2–1)", "⚙️ Historical Part View"])
 
 # -----------------------------
@@ -442,7 +442,7 @@ with tabs[2]:
         st.info(f"No defect rate columns with mean $> 0$ found for Part {selected_hist_part} in the full history.")
         
 # -----------------------------
-# TAB 2: Validation (6–2–1) - Logic remains the same
+# TAB 2: Validation (6–2–1)
 # -----------------------------
 with tabs[1]:
     st.subheader("Model Hyperparameters & Tuning Controls (Engineer View)")
@@ -464,7 +464,7 @@ with tabs[1]:
     st.subheader("Rolling 6–2–1 Backtest with Wilcoxon Significance")
     
     # Store validation results automatically
-    if run_validation and not st.session_session.validation_results.get("is_complete", False):
+    if run_validation and not st.session_state.validation_results.get("is_complete", False):
         with st.spinner("Running rolling evaluation…"):
             rows = []
             start_date, end_date = df["week_ending"].min(), df["week_ending"].max()
@@ -544,10 +544,10 @@ with tabs[1]:
                 start_date += relativedelta(months=1)
 
             results_df = pd.DataFrame(rows)
-            st.session_session.validation_results["is_complete"] = True
-            st.session_session.validation_results["results_df"] = results_df
-            st.session_session.validation_results["s_median"] = np.median(s_tuned_list) if s_tuned_list else 1.0
-            st.session_session.validation_results["gamma_median"] = np.median(g_tuned_list) if g_tuned_list else 0.5
+            st.session_state.validation_results["is_complete"] = True
+            st.session_state.validation_results["results_df"] = results_df
+            st.session_state.validation_results["s_median"] = np.median(s_tuned_list) if s_tuned_list else 1.0
+            st.session_state.validation_results["gamma_median"] = np.median(g_tuned_list) if g_tuned_list else 0.5
             
         # Display validation results
         if results_df.empty:
@@ -581,7 +581,7 @@ with tabs[1]:
                 if not summ_raw.empty: st.dataframe(summ_raw, use_container_width=True)
                 else: st.info("Need $\ge 10$ windows for Wilcoxon.")
                 
-            st.markdown(f"***Median Tuned Quick-Hook: s = {st.session_session.validation_results['s_median']:.2f}, $\gamma$ = {st.session_session.validation_results['gamma_median']:.2f}***")
+            st.markdown(f"***Median Tuned Quick-Hook: s = {st.session_state.validation_results['s_median']:.2f}, $\gamma$ = {st.session_state.validation_results['gamma_median']:.2f}***")
 
     elif not run_validation:
         st.info("Tick **Run 6–2–1 rolling validation** in the sidebar to compute windows and Wilcoxon tests.")
@@ -590,7 +590,7 @@ with tabs[1]:
 
 
 # -----------------------------
-# TAB 1: Predict (Now uses stored validation results) - Logic remains the same
+# TAB 1: Predict
 # -----------------------------
 with tabs[0]:
     st.subheader("Actionable Scrap Risk Prediction")
@@ -599,8 +599,8 @@ with tabs[0]:
     df_train, df_calib, df_test = time_split(df)
     
     # --- GET TUNING PARAMS ---
-    s_star = st.session_session.validation_results.get("s_median", 1.0)
-    gamma_star = st.session_session.validation_results.get("gamma_median", 0.5)
+    s_star = st.session_state.validation_results.get("s_median", 1.0)
+    gamma_star = st.session_state.validation_results.get("gamma_median", 0.5)
     
     # Train-only features at current threshold
     mtbf_train = compute_mtbf_on_train(df_train, thr_label)
@@ -618,7 +618,7 @@ with tabs[0]:
     X_test,  y_test,  _        = make_xy(df_test_f,  thr_label, USE_RATE_COLS_PERMANENT)
 
     # Note: Use n_estimators from validation tab, if running prediction on its own, it uses DEFAULT_ESTIMATORS
-    n_est = st.session_session.validation_results.get("n_estimators", DEFAULT_ESTIMATORS)
+    n_est = st.session_state.validation_results.get("n_estimators", DEFAULT_ESTIMATORS)
     _, calibrated_model, calib_method = train_and_calibrate(X_train, y_train, X_calib, y_calib, n_est)
 
     p_calib = calibrated_model.predict_proba(X_calib)[:, 1] if len(X_calib) else np.array([])
@@ -727,7 +727,7 @@ with tabs[0]:
                 st.info("$\approx$ Equal to historical exceedance rate.")
         
         # -----------------------------
-        # Part-Specific Full Defect Catalog (STILL HERE, but will likely be empty for Part 268)
+        # Part-Specific Full Defect Catalog 
         # -----------------------------
         st.subheader(f"Defect Catalog: All Historical Defects for Part {selected_part} (Full Institutional Memory)")
         

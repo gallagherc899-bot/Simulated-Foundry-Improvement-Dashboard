@@ -337,7 +337,7 @@ def get_alert_summary(prob):
 # -----------------------------
 st.sidebar.header("Data Source")
 # 🎯 TARGETED CHANGE: Update the default value here
-csv_path = st.sidebar.text_input("Path to CSV", value="anonymized_parts.csv")
+csv_path = st.sidebar.text_input("Path to CSV", value="anonymized_parts_simulated_success.csv")
 
 st.sidebar.header("Risk Definition")
 # Scrap Threshold is the only adjuster left for the manager (as requested)

@@ -37,7 +37,7 @@ USE_RATE_COLS_PERMANENT = True
 
 
 # -----------------------------
-# Helpers - MODIFIED for 80% Pareto Rule
+# Helpers - MODIFIED for 80% Pareto Rule & INSTITUTIONAL MEMORY
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def load_and_clean(csv_path: str) -> pd.DataFrame:
@@ -160,8 +160,8 @@ def compute_part_exceedance_baselines(df_train: pd.DataFrame, thr_label: float):
     """Per-part prevalence of exceeding the threshold, and a scale vs global prevalence."""
     part_prev = (
         df_train.assign(exceed=(df_train["scrap%"] > thr_label).astype(int))
-                .groupby("part_id")["exceed"].mean()
-                .clip(lower=1e-6, upper=0.999)
+                 .groupby("part_id")["exceed"].mean()
+                 .clip(lower=1e-6, upper=0.999)
     )
     global_prev = float(part_prev.mean()) if len(part_prev) else 0.5
     part_scale = (part_prev / max(global_prev, 1e-6)).fillna(1.0).clip(lower=0.25, upper=4.0)
@@ -204,7 +204,7 @@ def local_defect_drivers(calibrated_model,
                          k: int = 100) -> pd.DataFrame: # Increased k for intermediate calculation
     """
     Compute a local 'predicted Pareto' by measuring the positive delta in raw calibrated probability.
-    Now implements a dynamic stop at the first defect where cumulative_% meets or exceeds 80%.
+    Implements a dynamic stop at the first defect where cumulative_% meets or exceeds 80%.
     """
     rate_cols = [c for c in FEATURES if c.endswith("_rate")]
     if not rate_cols:
@@ -249,17 +249,20 @@ def local_defect_drivers(calibrated_model,
         return dd.head(0)
 
 
+# --- MODIFIED: Use df_full_history for Institutional Memory ---
 def historical_defect_pareto_for_part(selected_part: int,
-                                     df_train: pd.DataFrame,
-                                     k: int = 100) -> pd.DataFrame: # Increased k for intermediate calculation
+                                      df_full_history: pd.DataFrame, # CHANGE: Takes the full dataset 'df'
+                                      k: int = 100) -> pd.DataFrame: # Increased k for intermediate calculation
     """
     Top historical defect rates (means) for the part, dynamically stopping at 80% cumulative share.
+    USES THE FULL HISTORY (INSTITUTIONAL MEMORY).
     """
-    rate_cols = [c for c in df_train.columns if c.endswith("_rate")]
+    # CHANGE: Use the full history (df_full_history) for rate cols and part history
+    rate_cols = [c for c in df_full_history.columns if c.endswith("_rate")]
     if not rate_cols:
         return pd.DataFrame(columns=["defect", "mean_rate", "share_%", "cumulative_%"])
 
-    part_hist = df_train[df_train["part_id"] == selected_part]
+    part_hist = df_full_history[df_full_history["part_id"] == selected_part]
     if part_hist.empty:
         return pd.DataFrame(columns=["defect", "mean_rate", "share_%", "cumulative_%"])
 
@@ -357,7 +360,7 @@ if not os.path.exists(csv_path):
 df = load_and_clean(csv_path)
 
 st.title("🧪 Foundry Scrap Risk Dashboard — Actionable Insights")
-st.caption("RF + calibrated probs • **Validation-tuned (s, γ)** quick-hook • per-part **exceedance** scaling • MTTFscrap & reliability • Historical & Predicted 80% Pareto")
+st.caption("RF + calibrated probs • **Validation-tuned (s, γ)** quick-hook • per-part **exceedance** scaling • MTTFscrap & reliability • Historical (Full History) & Predicted 80% Pareto")
 
 # Global state to hold validation results (for automatic use in the Predict tab)
 if "validation_results" not in st.session_state:
@@ -484,7 +487,7 @@ with tabs[1]:
                 actual = df["actual_mean"].to_numpy(float)
                 pred = df[col].to_numpy(float)
                 rel_err = np.where(actual>0, np.abs(pred-actual)/actual,
-                                     np.where(pred==0, 0.0, 1.0))
+                                    np.where(pred==0, 0.0, 1.0))
                 gain = np.clip(1.0-rel_err, 0.0, 1.0)
                 rows=[]
                 if len(gain)>=10:
@@ -520,6 +523,7 @@ with tabs[1]:
 with tabs[0]:
     st.subheader("Actionable Scrap Risk Prediction")
 
+    # The time split is necessary here to train the model on the last 60% of data (df_train_f)
     df_train, df_calib, df_test = time_split(df)
     
     # --- GET TUNING PARAMS ---
@@ -652,18 +656,19 @@ with tabs[0]:
 
         # -----------------------------
         # NEW: Historical vs Predicted Pareto (80% rule applied)
+        # **The HISTORICAL Pareto now uses the full 'df' for institutional memory.**
         # -----------------------------
         st.subheader("Pareto of Defects — Historical vs Predicted (Top 80% Drivers)")
 
         rate_cols_in_model = [c for c in FEATURES if c.endswith("_rate")]
         if not rate_cols_in_model:
-             st.error("Cannot compute Pareto. No *_rate features found in data or model.")
+            st.error("Cannot compute Pareto. No *_rate features found in data or model.")
         else:
-            # Historical Pareto for the selected part (now uses 80% rule)
-            hist_pareto = historical_defect_pareto_for_part(selected_part, df_train_f)
+            # Historical Pareto for the selected part (NOW uses the full 'df' dataset for institutional memory)
+            hist_pareto = historical_defect_pareto_for_part(selected_part, df)
             hist_pareto = hist_pareto.rename(columns={"mean_rate": "hist_mean_rate"})
 
-            # Local (predicted) drivers for the current input (now uses 80% rule)
+            # Local (predicted) drivers for the current input (uses the time-split training data model)
             pred_pareto = local_defect_drivers(
                 calibrated_model=calibrated_model,
                 input_row=input_row,
@@ -675,7 +680,7 @@ with tabs[0]:
             # Left-right display
             c_left, c_right = st.columns(2)
             with c_left:
-                st.markdown("**Historical Pareto (Top 80% defect rates for this part)**")
+                st.markdown("**Historical Pareto (Full History Institutional Memory)**")
                 if len(hist_pareto):
                     st.dataframe(
                         hist_pareto.assign(
@@ -687,7 +692,7 @@ with tabs[0]:
                         use_container_width=True
                     )
                 else:
-                    st.info("No historical defect rates found for this part in the training window.")
+                    st.info("No historical defect rates found for this part in the full history.")
 
             with c_right:
                 st.markdown("**Predicted Pareto (Top 80% local drivers of current prediction)**")
@@ -701,17 +706,5 @@ with tabs[0]:
                         }).rename(columns={"delta_prob_raw": "Δ prob (pp)"}),
                         use_container_width=True
                     )
-
-                    st.caption("For each defect-rate feature, we set it to the 75th percentile and measure the +∆ in the raw calibrated probability vs base. Larger +∆ means stronger risk driver **for this prediction**.")
                 else:
-                    st.info("Predicted Pareto unavailable (no positive delta drivers found).")
-
-        # Diagnostics
-        st.subheader("Model Diagnostics")
-        test_brier = np.nan
-        try:
-            test_brier = brier_score_loss(y_test, p_test) if len(X_test) and len(p_test) else np.nan
-        except Exception:
-            pass
-        st.write(f"Calibration: **{calib_method}** | Test Brier: {test_brier:.4f}")
-        st.caption("Adjusted risk = calibrated prob × s × (part_scale^γ). part_scale is the per-part exceedance prevalence relative to train global prevalence.")
+                    st.info("No current defect drivers identified by the model.")

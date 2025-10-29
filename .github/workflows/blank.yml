@@ -20,7 +20,7 @@ from sklearn.metrics import brier_score_loss, accuracy_score
 # Page / constants
 # -----------------------------
 st.set_page_config(
-    page_title="Foundry Scrap Risk Dashboard — Actionable Insights",
+    page_title="Simulated Foundry Scrap Risk Dashboard — Actionable Insights",
     layout="wide"
 )
 
@@ -134,7 +134,7 @@ def tune_s_gamma_on_validation(p_val_raw, y_val, part_ids_val, part_scale,
                                s_grid=S_GRID, gamma_grid=GAMMA_GRID):
     """Minimize Brier on validation for p_adj = p_raw * s * (part_scale^gamma)."""
     if not len(p_val_raw):
-         return {"brier_val": np.nan, "s": 1.0, "gamma": 1.0}
+          return {"brier_val": np.nan, "s": 1.0, "gamma": 1.0}
     
     ps = part_scale.reindex(part_ids_val).fillna(1.0).to_numpy(dtype=float)
     best = (np.inf, 1.0, 1.0)
@@ -237,7 +237,7 @@ def local_defect_drivers(calibrated_model,
         # --- 80% Pareto Rule Implementation ---
         stop_index_loc = dd[dd["cumulative_%"] >= 80.0].index.min()
         if pd.isna(stop_index_loc):
-             return dd
+              return dd
         
         # Get the index position of the stop_index_loc, and slice up to that position (inclusive)
         stop_pos = dd.index.get_loc(stop_index_loc)
@@ -250,8 +250,8 @@ def local_defect_drivers(calibrated_model,
 
 
 def historical_defect_pareto_for_part(selected_part: int,
-                                     df_train: pd.DataFrame,
-                                     k: int = 100) -> pd.DataFrame: # Increased k for intermediate calculation
+                                      df_train: pd.DataFrame,
+                                      k: int = 100) -> pd.DataFrame: # Increased k for intermediate calculation
     """
     Top historical defect rates (means) for the part, dynamically stopping at 80% cumulative share.
     """
@@ -278,7 +278,7 @@ def historical_defect_pareto_for_part(selected_part: int,
         # --- 80% Pareto Rule Implementation ---
         stop_index_loc = out[out["cumulative_%"] >= 80.0].index.min()
         if pd.isna(stop_index_loc):
-             return out
+              return out
         
         # Get the index position of the stop_index_loc, and slice up to that position (inclusive)
         stop_pos = out.index.get_loc(stop_index_loc)
@@ -336,7 +336,8 @@ def get_alert_summary(prob):
 # Sidebar - SIMPLIFIED for Foundry Manager
 # -----------------------------
 st.sidebar.header("Data Source")
-csv_path = st.sidebar.text_input("Path to CSV", value="anonymized_parts.csv")
+# 🎯 TARGETED CHANGE: Update the default value here
+csv_path = st.sidebar.text_input("Path to CSV", value="anonymized_parts_simulated_success.csv")
 
 st.sidebar.header("Risk Definition")
 # Scrap Threshold is the only adjuster left for the manager (as requested)
@@ -484,7 +485,7 @@ with tabs[1]:
                 actual = df["actual_mean"].to_numpy(float)
                 pred = df[col].to_numpy(float)
                 rel_err = np.where(actual>0, np.abs(pred-actual)/actual,
-                                     np.where(pred==0, 0.0, 1.0))
+                                         np.where(pred==0, 0.0, 1.0))
                 gain = np.clip(1.0-rel_err, 0.0, 1.0)
                 rows=[]
                 if len(gain)>=10:
@@ -701,17 +702,3 @@ with tabs[0]:
                         }).rename(columns={"delta_prob_raw": "Δ prob (pp)"}),
                         use_container_width=True
                     )
-
-                    st.caption("For each defect-rate feature, we set it to the 75th percentile and measure the +∆ in the raw calibrated probability vs base. Larger +∆ means stronger risk driver **for this prediction**.")
-                else:
-                    st.info("Predicted Pareto unavailable (no positive delta drivers found).")
-
-        # Diagnostics
-        st.subheader("Model Diagnostics")
-        test_brier = np.nan
-        try:
-            test_brier = brier_score_loss(y_test, p_test) if len(X_test) and len(p_test) else np.nan
-        except Exception:
-            pass
-        st.write(f"Calibration: **{calib_method}** | Test Brier: {test_brier:.4f}")
-        st.caption("Adjusted risk = calibrated prob × s × (part_scale^γ). part_scale is the per-part exceedance prevalence relative to train global prevalence.")

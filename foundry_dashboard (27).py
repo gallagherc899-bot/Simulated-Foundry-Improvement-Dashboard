@@ -248,7 +248,7 @@ def local_defect_drivers(calibrated_model,
         return dd.head(0)
 
 
-# --- MODIFIED: Historical Pareto (80% cutoff for institutional memory) ---
+# --- Historical Pareto (80% cutoff for institutional memory) ---
 def historical_defect_pareto_for_part(selected_part: int,
                                       df_full_history: pd.DataFrame,
                                       k: int = 100) -> pd.DataFrame:
@@ -293,10 +293,10 @@ def historical_defect_pareto_for_part(selected_part: int,
         out["cumulative_%"] = 0.0
         return out.head(0)
 
-# --- MODIFIED: Historical Defect Full List for Part (Full List) ---
+# --- Historical Defect Full List for Part (Full List) ---
 def historical_defect_full_list_for_part(selected_part: int, df_full_history: pd.DataFrame) -> pd.DataFrame:
     """
-    Computes the mean rate for *all* defect columns for the selected part.
+    Computes the mean rate for *all* defect columns for the selected part (mean rate > 0).
     This provides a full catalog of all possible historical defects for the part (no 80% cutoff).
     """
     rate_cols = [c for c in df_full_history.columns if c.endswith("_rate")]
@@ -394,10 +394,55 @@ st.caption("RF + calibrated probs • **Validation-tuned (s, $\gamma$)** quick-h
 if "validation_results" not in st.session_state:
     st.session_state.validation_results = {}
 
-tabs = st.tabs(["🔮 Predict", "📏 Validation (6–2–1)"])
+# --- NEW TAB ADDED ---
+tabs = st.tabs(["🔮 Predict", "📏 Validation (6–2–1)", "⚙️ Historical Part View"])
 
 # -----------------------------
-# TAB 2: Validation (6–2–1)
+# TAB 3: Historical Part View
+# -----------------------------
+with tabs[2]:
+    st.header("⚙️ Historical Part View: Institutional Memory")
+    
+    part_ids = sorted(df["part_id"].unique())
+    selected_hist_part = st.selectbox("Select Part ID to View History", part_ids, key="hist_part_select")
+    
+    st.markdown("---")
+    st.subheader(f"Historical Run Data for Part ID {selected_hist_part}")
+
+    hist_df = df[df["part_id"] == selected_hist_part].sort_values("week_ending", ascending=False)
+    
+    if hist_df.empty:
+        st.warning(f"No historical data found for Part ID {selected_hist_part}.")
+    else:
+        st.markdown(f"***Displaying {len(hist_df)} historical runs, sorted by most recent.***")
+        
+        # Display the raw operational data
+        st.dataframe(
+            hist_df.drop(columns=["part_id", "pieces_scrapped"]).reset_index(drop=True), 
+            use_container_width=True
+        )
+
+    st.markdown("---")
+    st.subheader(f"Historical Defect Catalog for Part ID {selected_hist_part}")
+
+    # Use the robust defect catalog function here
+    full_catalog = historical_defect_full_list_for_part(selected_hist_part, df)
+    
+    if len(full_catalog):
+        st.markdown(
+            "***This table lists every defect ever recorded for this part, sorted by its overall historical mean rate (Mean Rate > 0).***"
+        )
+        st.dataframe(
+            full_catalog.assign(
+                part_mean_rate=lambda d: d["part_mean_rate"].round(4)
+            ).rename(columns={"part_mean_rate": "Historical Mean Rate (Part)"}),
+            use_container_width=True
+        )
+    else:
+        st.info(f"No defect rate columns with mean $> 0$ found for Part {selected_hist_part} in the full history.")
+        
+# -----------------------------
+# TAB 2: Validation (6–2–1) - Logic remains the same
 # -----------------------------
 with tabs[1]:
     st.subheader("Model Hyperparameters & Tuning Controls (Engineer View)")
@@ -419,7 +464,7 @@ with tabs[1]:
     st.subheader("Rolling 6–2–1 Backtest with Wilcoxon Significance")
     
     # Store validation results automatically
-    if run_validation and not st.session_state.validation_results.get("is_complete", False):
+    if run_validation and not st.session_session.validation_results.get("is_complete", False):
         with st.spinner("Running rolling evaluation…"):
             rows = []
             start_date, end_date = df["week_ending"].min(), df["week_ending"].max()
@@ -499,10 +544,10 @@ with tabs[1]:
                 start_date += relativedelta(months=1)
 
             results_df = pd.DataFrame(rows)
-            st.session_state.validation_results["is_complete"] = True
-            st.session_state.validation_results["results_df"] = results_df
-            st.session_state.validation_results["s_median"] = np.median(s_tuned_list) if s_tuned_list else 1.0
-            st.session_state.validation_results["gamma_median"] = np.median(g_tuned_list) if g_tuned_list else 0.5
+            st.session_session.validation_results["is_complete"] = True
+            st.session_session.validation_results["results_df"] = results_df
+            st.session_session.validation_results["s_median"] = np.median(s_tuned_list) if s_tuned_list else 1.0
+            st.session_session.validation_results["gamma_median"] = np.median(g_tuned_list) if g_tuned_list else 0.5
             
         # Display validation results
         if results_df.empty:
@@ -536,7 +581,7 @@ with tabs[1]:
                 if not summ_raw.empty: st.dataframe(summ_raw, use_container_width=True)
                 else: st.info("Need $\ge 10$ windows for Wilcoxon.")
                 
-            st.markdown(f"***Median Tuned Quick-Hook: s = {st.session_state.validation_results['s_median']:.2f}, $\gamma$ = {st.session_state.validation_results['gamma_median']:.2f}***")
+            st.markdown(f"***Median Tuned Quick-Hook: s = {st.session_session.validation_results['s_median']:.2f}, $\gamma$ = {st.session_session.validation_results['gamma_median']:.2f}***")
 
     elif not run_validation:
         st.info("Tick **Run 6–2–1 rolling validation** in the sidebar to compute windows and Wilcoxon tests.")
@@ -545,7 +590,7 @@ with tabs[1]:
 
 
 # -----------------------------
-# TAB 1: Predict (Now uses stored validation results)
+# TAB 1: Predict (Now uses stored validation results) - Logic remains the same
 # -----------------------------
 with tabs[0]:
     st.subheader("Actionable Scrap Risk Prediction")
@@ -554,8 +599,8 @@ with tabs[0]:
     df_train, df_calib, df_test = time_split(df)
     
     # --- GET TUNING PARAMS ---
-    s_star = st.session_state.validation_results.get("s_median", 1.0)
-    gamma_star = st.session_state.validation_results.get("gamma_median", 0.5)
+    s_star = st.session_session.validation_results.get("s_median", 1.0)
+    gamma_star = st.session_session.validation_results.get("gamma_median", 0.5)
     
     # Train-only features at current threshold
     mtbf_train = compute_mtbf_on_train(df_train, thr_label)
@@ -573,7 +618,7 @@ with tabs[0]:
     X_test,  y_test,  _        = make_xy(df_test_f,  thr_label, USE_RATE_COLS_PERMANENT)
 
     # Note: Use n_estimators from validation tab, if running prediction on its own, it uses DEFAULT_ESTIMATORS
-    n_est = st.session_state.validation_results.get("n_estimators", DEFAULT_ESTIMATORS)
+    n_est = st.session_session.validation_results.get("n_estimators", DEFAULT_ESTIMATORS)
     _, calibrated_model, calib_method = train_and_calibrate(X_train, y_train, X_calib, y_calib, n_est)
 
     p_calib = calibrated_model.predict_proba(X_calib)[:, 1] if len(X_calib) else np.array([])
@@ -682,7 +727,7 @@ with tabs[0]:
                 st.info("$\approx$ Equal to historical exceedance rate.")
         
         # -----------------------------
-        # NEW: Part-Specific Full Defect Catalog
+        # Part-Specific Full Defect Catalog (STILL HERE, but will likely be empty for Part 268)
         # -----------------------------
         st.subheader(f"Defect Catalog: All Historical Defects for Part {selected_part} (Full Institutional Memory)")
         
@@ -699,8 +744,7 @@ with tabs[0]:
                 use_container_width=True
             )
         else:
-            # This message should now only appear if the part literally has no defect rate columns with mean > 0
-            st.info(f"No defect rate columns with mean $> 0$ found for Part {selected_part} in the full history. The failure is likely driven by reliability metrics.")
+            st.info(f"No defect rate columns with mean $> 0$ found for Part {selected_part} in the full history. The failure is likely driven by reliability metrics. **Check the 'Historical Part View' tab for full run data.**")
 
 
         # -----------------------------

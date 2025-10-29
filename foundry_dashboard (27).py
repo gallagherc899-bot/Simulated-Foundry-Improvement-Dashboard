@@ -19,7 +19,7 @@ from sklearn.metrics import brier_score_loss, accuracy_score
 # Page / constants
 # -----------------------------
 st.set_page_config(
-    page_title="Foundry Scrap Risk Dashboard - Actionable Insights",
+    page_title="Simulated Foundry Scrap Risk Dashboard - Actionable Insights",
     layout="wide"
 )
 
@@ -36,7 +36,7 @@ USE_RATE_COLS_PERMANENT = True
 # Sidebar controls
 # -----------------------------
 st.sidebar.header("Data Source")
-csv_path = st.sidebar.text_input("Path to CSV", value="anonymized_parts.csv")
+csv_path = st.sidebar.text_input("Path to CSV", value="anonymized_parts_simulated_success.csv")
 
 st.sidebar.header("Risk Definition")
 thr_label = st.sidebar.slider("Scrap % Threshold", 1.0, 15.0, 6.50, 0.5)

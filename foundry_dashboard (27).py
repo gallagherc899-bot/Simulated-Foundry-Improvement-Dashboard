@@ -19,7 +19,7 @@ from sklearn.metrics import brier_score_loss, accuracy_score
 # Page / constants
 # -----------------------------
 st.set_page_config(
-    page_title="Simulated Foundry Scrap Risk Dashboard - Actionable Insights",
+    page_title="Simulated Foundry Scrap Risk Dashboard ",
     layout="wide"
 )
 
